@@ -88,8 +88,26 @@ export async function updateTicketAnalysis(id, { category, sentiment, priority, 
 }
 
 /**
+ * Approve a ticket: sets status to APPROVED and copies suggested_response
+ * to final_response if final_response was not already customized.
+ */
+export async function approveTicket(id) {
+  const sql = `
+    UPDATE support_tickets
+    SET
+      status = 'APPROVED',
+      final_response = COALESCE(final_response, suggested_response),
+      updated_at = NOW()
+    WHERE id = $1
+    RETURNING *
+  `;
+  const result = await db.query(sql, [id]);
+  return result.rows[0] || null;
+}
+
+/**
  * Update only the ticket status and updated_at.
- * Used by the approve/reject endpoints in Phase 4+.
+ * Used by the reject endpoint or analysis lifecycle.
  */
 export async function updateTicketStatus(id, status) {
   const sql = `

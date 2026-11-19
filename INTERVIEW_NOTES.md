@@ -412,3 +412,17 @@ Support agents often need to tweak AI-generated responses before approving them.
 - `final_response` stores the human-edited or human-approved response.
 - `PATCH /api/tickets/:id/response` updates `final_response` while keeping the ticket in `PENDING_REVIEW`.
 - Once the agent is satisfied, they issue `PATCH /api/tickets/:id/approve` to complete the workflow.
+
+
+---
+
+## 27. End-to-End Workflow & Database Persistence Pattern
+
+In a production-ready portfolio project, how do the database, HTTP server, and LangGraph interact?
+
+1. **State Isolation**: Each ticket uses its PostgreSQL UUID as the LangGraph `thread_id`. This guarantees checkpoint isolation between concurrent tickets.
+2. **Persistence vs. In-Flight State**: 
+   - LangGraph `MemorySaver` retains the intermediate graph nodes and interrupted execution state in memory.
+   - PostgreSQL retains the durable source-of-truth: ticket payload, analysis metadata, timestamps, and status flags.
+3. **Graceful Degeneration on Server Restart**: If an instance restarts while a ticket is `PENDING_REVIEW`, the checkpoint in `MemorySaver` is lost, but the database still knows the ticket is awaiting human action. Resuming handles the checkpoint absence gracefully without blocking database status updates.
+4. **Idempotency & Status Guards**: State transition validation (`status === 'PENDING_REVIEW'`) prevents duplicate approvals or actions on rejected/in-progress tickets.

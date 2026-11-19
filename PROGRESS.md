@@ -127,7 +127,22 @@ START → classifyTicket → assignTeam → generateResponse → humanReview →
 
 ---
 
-## Phase 5: API Integration and Database Persistence ⏳ PENDING
+## Phase 5: API Integration and Database Persistence ✅ COMPLETED
+
+**Goal:** Fully integrated AI Support Ticket Intelligence API connected to PostgreSQL.
+
+### Completed Tasks
+
+- [x] Connected LangGraph workflow to Express `POST /api/tickets` via non-blocking background task.
+- [x] Implemented status lifecycle transitions: `NEW` → `ANALYZING` → `PENDING_REVIEW` → `APPROVED` / `REJECTED` (with `ANALYSIS_FAILED` error fallback).
+- [x] Saved all structured AI outputs and `thread_id` to PostgreSQL `support_tickets` table.
+- [x] Refined `approveTicketHandler` and `rejectTicketHandler` to resume paused graph checkpoints and ensure `final_response` population.
+- [x] Handled server restart edge cases gracefully when resuming in-memory checkpoints.
+- [x] Created `test-api.js` for end-to-end integration testing over HTTP.
+
+---
+
+## Phase 6: Testing, Documentation and Deployment ⏳ PENDING
 
 ---
 

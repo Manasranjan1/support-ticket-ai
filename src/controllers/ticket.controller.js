@@ -5,6 +5,7 @@ import {
   getTicketById,
   updateTicketAnalysis,
   updateTicketStatus,
+  approveTicket,
   updateFinalResponse,
 } from '../services/ticket.service.js';
 import { analyzeTicket, resumeWorkflow } from '../services/ticket-analysis.service.js';
@@ -212,18 +213,20 @@ export async function approveTicketHandler(req, res, next) {
         message: `Ticket cannot be approved. Current status is '${ticket.status}'. Expected 'PENDING_REVIEW'.`,
       });
     }
-    if (!ticket.thread_id) {
-      return res.status(409).json({
-        status: 'error',
-        message: 'No active workflow thread found. This ticket may not have been processed by the AI workflow.',
-      });
+
+    // Attempt to resume the in-memory LangGraph graph with the human decision.
+    // If the server was restarted after analysis, the in-memory checkpoint might no longer exist.
+    // We catch and log this so the database operation still succeeds.
+    if (ticket.thread_id) {
+      try {
+        await resumeWorkflow(ticket.thread_id, 'approved');
+      } catch (graphError) {
+        console.warn(`[approveTicketHandler] In-memory graph checkpoint not found or failed to resume: ${graphError.message}`);
+      }
     }
 
-    // Resume the paused LangGraph graph with the human decision
-    await resumeWorkflow(ticket.thread_id, 'approved');
-
-    // Update the DB to reflect the final approved status
-    const updated = await updateTicketStatus(id, 'APPROVED');
+    // Update DB status to APPROVED (and copies suggested_response to final_response if not already set)
+    const updated = await approveTicket(id);
 
     res.status(200).json({
       status: 'success',
@@ -255,15 +258,15 @@ export async function rejectTicketHandler(req, res, next) {
         message: `Ticket cannot be rejected. Current status is '${ticket.status}'. Expected 'PENDING_REVIEW'.`,
       });
     }
-    if (!ticket.thread_id) {
-      return res.status(409).json({
-        status: 'error',
-        message: 'No active workflow thread found for this ticket.',
-      });
-    }
 
-    // Resume the paused LangGraph graph with the human decision
-    await resumeWorkflow(ticket.thread_id, 'rejected');
+    // Attempt to resume in-memory graph
+    if (ticket.thread_id) {
+      try {
+        await resumeWorkflow(ticket.thread_id, 'rejected');
+      } catch (graphError) {
+        console.warn(`[rejectTicketHandler] In-memory graph checkpoint not found or failed to resume: ${graphError.message}`);
+      }
+    }
 
     // Update the DB status
     const updated = await updateTicketStatus(id, 'REJECTED');
