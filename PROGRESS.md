@@ -55,7 +55,27 @@
 
 ---
 
-## Phase 2: LLM Integration and Structured Outputs ⏳ PENDING
+## Phase 2: LLM Integration and Structured Outputs ✅ COMPLETED
+
+**Goal:** Working AI ticket analysis with structured LLM outputs.
+
+### Completed Tasks
+
+- [x] Installed `@langchain/core`, `@langchain/google-genai`, `@langchain/openai`, `@langchain/langgraph`, `zod`
+- [x] Created `src/config/ai.js` — provider factory (Google/OpenAI, env-driven)
+- [x] Created `src/services/ticket-analysis.service.js`:
+  - `classifyTicket()` — structured output via Zod schema + `withStructuredOutput()`
+  - `generateSuggestedResponse()` — free-form LLM response generation
+- [x] Created `test-ai.js` — manual test script with 4 real ticket scenarios
+- [x] Verified Gemini API + structured output returns correct shape
+
+### Key Decisions Made in Phase 2
+
+1. **One LLM call for all classification** — category, sentiment, priority, and summary come from one `withStructuredOutput()` call. Three separate calls would be slower and waste API quota.
+2. **Double validation** — `withStructuredOutput` enforces shape at the LLM level; `safeParse()` catches it again at runtime. Belt and suspenders.
+3. **Temperature 0 for classification, 0.3 for responses** — Classification needs determinism; response generation benefits from slightly more natural language variation.
+4. **`generateSuggestedResponse` uses free-form output** — Responses are prose, not structured data. Using `model.invoke()` directly is correct here.
+5. **System prompt safety rules** — The response generator is explicitly told never to promise refunds, timelines, or confirm actions not yet taken.
 
 ---
 

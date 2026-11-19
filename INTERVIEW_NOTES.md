@@ -184,7 +184,93 @@ The PostgreSQL error code `22P02` means "invalid text representation" — this f
 
 ---
 
-## 9. Why not use an ORM (Prisma, TypeORM)?
+## 14. What is `withStructuredOutput()` and why use it?
+
+Normally, an LLM returns free-form text. If you ask it to classify a ticket, it might say:
+- "The category is Billing."
+- "Category: Billing, Priority: Critical"
+- "Based on the message, this appears to be a billing issue..."
+
+Parsing this reliably is fragile. `withStructuredOutput(schema)` fixes this.
+
+**How it works internally:**
+LangChain translates your Zod schema into a function/tool definition and sends it to the LLM API. Instead of generating text, the model fills in a JSON object. The result is returned as a plain JS object — no parsing needed.
+
+```js
+const schema = z.object({
+  category: z.enum(['Billing', 'Technical', 'Account', 'General']),
+  sentiment: z.enum(['Positive', 'Neutral', 'Negative']),
+  priority: z.enum(['Low', 'Medium', 'High', 'Critical']),
+  summary: z.string().max(200),
+});
+
+const structuredModel = model.withStructuredOutput(schema);
+const result = await structuredModel.invoke([systemMsg, userMsg]);
+// result = { category: 'Billing', sentiment: 'Negative', priority: 'Critical', summary: '...' }
+```
+
+**Interview answer:** "I used `withStructuredOutput` with a Zod schema to force the LLM to return a typed JSON object instead of free-form text. This eliminates brittle string parsing and gives guaranteed structure."
+
+---
+
+## 15. Why does `.describe()` matter on Zod fields?
+
+When LangChain translates your Zod schema into a tool definition, the `.describe()` text becomes the field description in the tool schema sent to the model. The LLM reads these descriptions to understand what value belongs in each field.
+
+```js
+priority: z.enum(['Low', 'Medium', 'High', 'Critical'])
+  .describe(
+    'Critical: payment failure, duplicate charges, complete service outage. ' +
+    'High: service degraded, significant user impact...'
+  )
+```
+
+Without `.describe()`, the model only sees the field name and enum values — no context. With descriptions, accuracy improves significantly.
+
+---
+
+## 16. What is the configurable AI provider pattern?
+
+`src/config/ai.js` exports a single `getChatModel()` function:
+
+```js
+export function getChatModel(options = {}) {
+  const provider = process.env.AI_PROVIDER || 'google';
+  if (provider === 'google') return new ChatGoogleGenerativeAI({ ... });
+  if (provider === 'openai') return new ChatOpenAI({ ... });
+}
+```
+
+The workflow nodes call `getChatModel()` and work with the returned model object — they never import `ChatGoogleGenerativeAI` or `ChatOpenAI` directly. Switching providers is a one-line `.env` change.
+
+This is **dependency injection** in a simple form: the dependency (the LLM provider) is resolved at the boundary of the config module, not scattered through the code.
+
+---
+
+## 17. Why different temperatures for classification vs response generation?
+
+- **Temperature 0** — Deterministic. The model always picks the highest-probability token. Best for classification where you want consistent, repeatable results regardless of when you call it.
+- **Temperature 0.3** — Slightly randomized. Produces more natural-sounding prose. Good for response generation where slight variation makes responses feel less robotic.
+
+Setting temperature too high (e.g. 0.9+) on classification can cause the model to randomly return different categories for the same input.
+
+---
+
+## 18. Why call `safeParse()` after `withStructuredOutput`?
+
+`withStructuredOutput` usually enforces the schema correctly, but:
+- Some providers (especially Gemini on certain model versions) may occasionally return malformed tool call results.
+- Edge cases like very short or empty messages can confuse the model.
+
+`safeParse()` is a zero-cost safety net. If the LLM returns something unexpected, we throw a descriptive error immediately instead of propagating bad data into the database.
+
+```js
+const parsed = classificationSchema.safeParse(result);
+if (!parsed.success) {
+  throw new Error(`LLM returned invalid data: ${parsed.error.message}`);
+}
+return parsed.data;
+```
 
 For this project, raw `pg` queries are simpler:
 - Fewer dependencies.
