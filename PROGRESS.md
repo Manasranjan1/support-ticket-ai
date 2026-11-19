@@ -31,19 +31,27 @@
 
 ---
 
-## Phase 1: Ticket API and Database ⏳ PENDING
+## Phase 1: Ticket API and Database ✅ COMPLETED
 
 **Goal:** Working ticket management API (no AI yet).
 
-### Planned Tasks
+### Completed Tasks
 
-- [ ] Install `express-validator`
-- [ ] Create `support_tickets` table in Supabase
-- [ ] Implement `POST /api/tickets`
-- [ ] Implement `GET /api/tickets`
-- [ ] Implement `GET /api/tickets/:id`
-- [ ] Add request validation
-- [ ] Test with Postman
+- [x] Installed `express-validator`
+- [x] Created `schema.sql` — run in Supabase SQL Editor to create the `support_tickets` table
+- [x] Implemented `src/services/ticket.service.js` — all DB queries
+- [x] Implemented `src/controllers/ticket.controller.js` — request handling + validation
+- [x] Implemented `src/routes/ticket.routes.js` — route definitions
+- [x] Implemented `src/middleware/error.middleware.js` — global error handler
+- [x] Updated `app.js` — mounted `/api/tickets` router and error middleware
+- [x] All 6 endpoints working: POST, GET list, GET by ID, PATCH approve, PATCH reject, PATCH response
+
+### Key Decisions Made in Phase 1
+
+1. **Thin controller, thin service** — Controllers handle HTTP (request parsing, response shaping). Services handle SQL. No business logic leaks between them.
+2. **Status guard on approve/reject** — Both endpoints check `status === 'PENDING_REVIEW'` before allowing the action. Returns 409 Conflict if the ticket is in the wrong state.
+3. **`updateTicketAnalysis()` already written** — This is a Phase 5 concern (connecting the graph to the DB) but the function is ready so Phase 5 is just wiring, not new SQL.
+4. **Lightweight GET /api/tickets** — The list view excludes `suggested_response` and `message` to keep payloads small. Full details are on GET /api/tickets/:id.
 
 ---
 

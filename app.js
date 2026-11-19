@@ -1,16 +1,15 @@
 import express from 'express';
+import ticketRoutes from './src/routes/ticket.routes.js';
+import { errorMiddleware } from './src/middleware/error.middleware.js';
 
 const app = express();
 
 // Parse incoming JSON request bodies.
-// This is required for POST/PATCH endpoints that accept JSON payloads.
 app.use(express.json());
 
 // ---------------------------------------------------------------------------
 // Health check endpoint
 // ---------------------------------------------------------------------------
-// A simple endpoint that returns a 200 OK response with server status info.
-// Used to verify the server is running (Postman, deployment health checks, etc.)
 app.get('/health', (req, res) => {
   res.status(200).json({
     status: 'ok',
@@ -21,7 +20,12 @@ app.get('/health', (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
-// 404 handler — catches any request to a route that does not exist
+// API Routes
+// ---------------------------------------------------------------------------
+app.use('/api/tickets', ticketRoutes);
+
+// ---------------------------------------------------------------------------
+// 404 handler — catches requests to undefined routes
 // ---------------------------------------------------------------------------
 app.use((req, res) => {
   res.status(404).json({
@@ -29,5 +33,11 @@ app.use((req, res) => {
     message: `Route ${req.method} ${req.path} not found`,
   });
 });
+
+// ---------------------------------------------------------------------------
+// Global error handler — must be registered LAST
+// Express identifies it by its 4-argument signature (err, req, res, next)
+// ---------------------------------------------------------------------------
+app.use(errorMiddleware);
 
 export default app;

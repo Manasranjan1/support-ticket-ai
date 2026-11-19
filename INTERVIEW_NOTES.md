@@ -127,6 +127,63 @@ NEW → ANALYZING → PENDING_REVIEW → APPROVED
 
 ---
 
+## 10. Express Request Validation with express-validator
+
+`express-validator` lets you declare validation rules as middleware arrays attached directly to routes.
+
+```js
+// Declare rules
+export const createTicketValidation = [
+  body('customerEmail').isEmail().withMessage('Must be a valid email'),
+  body('message').notEmpty().isLength({ min: 10 }),
+];
+
+// Attach to route
+router.post('/', createTicketValidation, createTicketHandler);
+
+// In the handler, check for errors
+const errors = validationResult(req);
+if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
+```
+
+**Why not validate in the service?** Services deal with data, not HTTP. Keeping validation in the controller/middleware layer means services can be called from anywhere (tests, other services) without needing an HTTP request object.
+
+---
+
+## 11. HTTP Status Codes Used in This Project
+
+| Code | Meaning | When Used |
+|------|---------|-----------|
+| 200 | OK | Successful GET, PATCH |
+| 201 | Created | Successful POST (new resource created) |
+| 400 | Bad Request | Validation failure, invalid input |
+| 404 | Not Found | Ticket ID doesn't exist in DB |
+| 409 | Conflict | Trying to approve/reject a ticket in the wrong status |
+| 500 | Internal Server Error | Unexpected DB or server error |
+
+---
+
+## 12. Why is the Global Error Middleware Registered Last?
+
+Express processes middleware in the order they are registered. If the error handler were registered before the routes, it would never receive errors from those routes.
+
+The 4-argument signature `(err, req, res, next)` is what tells Express it's an error handler — not a regular middleware. Never remove the `next` argument even if it's unused.
+
+---
+
+## 13. What is UUID and Why Use It as a Primary Key?
+
+`gen_random_uuid()` generates a Version 4 UUID (e.g. `a1b2c3d4-...`).
+
+Advantages over integer auto-increment:
+- **Non-guessable** — An attacker can't iterate `/api/tickets/1`, `/api/tickets/2`
+- **Globally unique** — Safe to merge rows from multiple data sources
+- **No ordering information** — Doesn't leak how many tickets exist
+
+The PostgreSQL error code `22P02` means "invalid text representation" — this fires when someone passes a non-UUID string to a UUID parameter. The error middleware catches it and returns a clean 400.
+
+---
+
 ## 9. Why not use an ORM (Prisma, TypeORM)?
 
 For this project, raw `pg` queries are simpler:
