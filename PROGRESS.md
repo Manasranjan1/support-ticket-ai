@@ -79,7 +79,33 @@
 
 ---
 
-## Phase 3: LangGraph Workflow ⏳ PENDING
+## Phase 3: LangGraph Workflow ✅ COMPLETED
+
+**Goal:** Working LangGraph ticket-processing workflow.
+
+### Completed Tasks
+
+- [x] Created `src/graph/ticket.state.js` — `Annotation.Root` state with 11 fields and overwrite reducers
+- [x] Created `src/nodes/classify.node.js` — calls `classifyTicket()`, returns 4 fields
+- [x] Created `src/nodes/assignment.node.js` — pure JS team routing, no LLM
+- [x] Created `src/nodes/response.node.js` — calls `generateSuggestedResponse()`
+- [x] Created `src/nodes/review.node.js` — `interrupt()` pause + resume with `approvalStatus`
+- [x] Created `src/graph/ticket.graph.js` — `StateGraph` compiled with `MemorySaver` checkpointer
+- [x] Created `test-graph.js` — full approve + reject workflow simulation
+- [x] All 6 modules load without errors
+
+### Graph Flow
+
+```
+START → classifyTicket → assignTeam → generateResponse → humanReview → END
+```
+
+### Key Decisions Made in Phase 3
+
+1. **Single compiled graph instance** — compiled once at module load, shared across all requests. Each ticket gets its own `thread_id` for isolated checkpointing.
+2. **`assignTeam` is pure JS** — No LLM needed for a simple category→team map. Demonstrates that graph nodes can be any function.
+3. **`interrupt()` payload is informational** — It carries a copy of the data the agent needs to review. The DB is still the source of truth.
+4. **`MemorySaver` tradeoff documented** — State lost on restart is a known, acceptable tradeoff for portfolio scope. The DB `thread_id` and `status` fields are the durable layer.
 
 ---
 

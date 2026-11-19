@@ -279,3 +279,109 @@ For this project, raw `pg` queries are simpler:
 - The schema is small (one table).
 
 An ORM makes more sense in larger projects with complex relationships and many tables.
+
+
+---
+
+## 19. What is a LangGraph StateGraph?
+
+A `StateGraph` is the core building block of LangGraph. You define:
+- **State shape** — via `Annotation.Root()`, the shared object all nodes read/write
+- **Nodes** — functions that receive state and return a partial state update
+- **Edges** — transitions between nodes (`addEdge`)
+- **Conditional edges** — transitions that choose the next node based on state (`addConditionalEdges`)
+
+```js
+const workflow = new StateGraph(TicketState)
+  .addNode('classifyTicket', classifyNode)
+  .addNode('assignTeam', assignTeamNode)
+  .addEdge(START, 'classifyTicket')
+  .addEdge('classifyTicket', 'assignTeam')
+  .addEdge('assignTeam', END);
+
+export const graph = workflow.compile({ checkpointer });
+```
+
+**Interview answer:** "A StateGraph defines the workflow as a directed graph. Each node is a function that reads from and writes to a shared state object. Edges define execution order. The compiled graph is what you actually invoke."
+
+---
+
+## 20. What is `Annotation.Root()` and why are reducers needed?
+
+`Annotation.Root()` defines the state schema. Each field needs a **reducer** — a function that tells LangGraph how to merge a new value into the existing state.
+
+```js
+ticketId: Annotation({
+  reducer: (currentValue, newValue) => newValue ?? currentValue,
+  default: () => '',
+}),
+```
+
+The reducer `(x, y) => y ?? x` means: use the new value if provided, otherwise keep the existing one (overwrite pattern).
+
+**Why are reducers needed?** In parallel graphs (multiple nodes running simultaneously), two nodes might update the same field. The reducer defines how to reconcile those updates. For our linear workflow, the reducer is straightforward — but it's the required API regardless.
+
+---
+
+## 21. What does `interrupt()` actually do?
+
+`interrupt(payload)` is a LangGraph function that:
+1. **Saves the entire graph state** to the checkpointer at the exact current point
+2. **Throws a special signal** that LangGraph catches internally to halt graph execution
+3. **Returns the payload** to the top-level `graph.invoke()` caller in `result.__interrupt__`
+
+The calling code does **not** see an exception — it receives a normal result object with an `__interrupt__` array.
+
+```js
+// In the node:
+const decision = interrupt({ message: 'Review required', ticketId: state.ticketId });
+// Execution stops here until resumed
+
+// What invoke() returns while paused:
+// { category: '...', __interrupt__: [{ value: { message: 'Review required', ticketId: '...' } }] }
+```
+
+---
+
+## 22. How does `Command({ resume })` work?
+
+After a graph is interrupted, you resume it by calling `invoke()` again with the **same `thread_id`** and a `Command` object instead of an input object:
+
+```js
+const finalResult = await ticketGraph.invoke(
+  new Command({ resume: 'approved' }),
+  { configurable: { thread_id: savedThreadId } }
+);
+```
+
+LangGraph:
+1. Loads the saved checkpoint for `thread_id`
+2. Re-enters the interrupted node
+3. The `interrupt()` call returns `'approved'` (the resume value)
+4. The node completes normally and the graph continues to END
+
+---
+
+## 23. Why is `thread_id` stored in the database?
+
+The `MemorySaver` stores state keyed by `thread_id`. When an agent calls `PATCH /approve`:
+1. The API fetches the ticket from the DB and reads `thread_id`
+2. It calls `graph.invoke(new Command({ resume: 'approved' }), { configurable: { thread_id } })`
+3. LangGraph finds the paused checkpoint and resumes it
+
+Without the `thread_id` in the DB, the API would have no way to resume the correct paused workflow.
+
+---
+
+## 24. Why is one node pure JavaScript (no LLM)?
+
+The `assignTeam` node is a simple category-to-team lookup:
+
+```js
+const TEAM_ASSIGNMENT = {
+  Billing: 'Billing Support',
+  Technical: 'Technical Support',
+};
+```
+
+Using an LLM here would be slower, more expensive, and less reliable than a plain object lookup. This demonstrates that **LangGraph nodes are just functions** — they call an LLM, query a DB, hit an API, or run pure logic, whatever the step needs.
