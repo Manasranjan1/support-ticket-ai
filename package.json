@@ -1,0 +1,26 @@
+{
+  "name": "support-ticket-ai",
+  "version": "1.0.0",
+  "description": "AI-Powered Support Ticket Intelligence using LangChain.js and LangGraph.js",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "test": "node --experimental-vm-modules node_modules/.bin/jest"
+  },
+  "keywords": [
+    "langchain",
+    "langgraph",
+    "ai",
+    "support-tickets",
+    "nodejs"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "dotenv": "^18.0.10",
+    "express": "^5.3.0",
+    "pg": "^8.23.1"
+  }
+}
