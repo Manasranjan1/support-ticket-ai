@@ -24,6 +24,10 @@ export const db = {
   query: (text, params) => pool.query(text, params),
 };
 
+export async function closePool() {
+  await pool.end();
+}
+
 // Called once at startup to verify the database connection is working.
 // If this fails, the server will not start.
 export async function testConnection() {
