@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS support_tickets (
   -- Workflow tracking
   status            VARCHAR(50)   NOT NULL DEFAULT 'NEW',
   -- Statuses: NEW → ANALYZING → PENDING_REVIEW → APPROVED | REJECTED
+  --           NEW → ANALYZING → ANALYSIS_FAILED  (if LLM/network error occurs)
 
   -- LangGraph thread ID — used to resume the paused graph on approve/reject
   -- Stored here so the HTTP layer can find the right paused workflow

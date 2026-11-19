@@ -1,29 +1,29 @@
 import { z } from 'zod';
 import { HumanMessage, SystemMessage } from '@langchain/core/messages';
+import { Command } from '@langchain/langgraph';
 import { getChatModel } from '../config/ai.js';
+import { ticketGraph } from '../graph/ticket.graph.js';
 
 // ---------------------------------------------------------------------------
 // ticket-analysis.service.js
 //
-// Responsible for all AI-powered analysis of a support ticket.
-// In Phase 2 this module is standalone — it is called directly to verify
-// the LLM integration works. In Phase 5 it gets wired into the Express API.
+// All AI-powered operations live here.
+// This module is the bridge between:
+//   - The LangGraph workflow (ticket.graph.js)
+//   - The Express controllers (ticket.controller.js)
+//   - The database service (ticket.service.js)
 //
-// Key LangChain concept demonstrated here: withStructuredOutput()
-// Instead of parsing free-form LLM text, we bind a Zod schema to the model.
-// LangChain uses tool/function-calling under the hood to enforce the shape.
-// The result is a plain JS object — guaranteed to match the schema.
+// Functions exported:
+//   classifyTicket()         — structured LLM call (category/sentiment/priority/summary)
+//   generateSuggestedResponse() — free-form LLM response draft
+//   analyzeTicket()          — runs the full graph, handles the interrupt
+//   resumeWorkflow()         — resumes a paused graph after human decision
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
-// Classification Schema
-//
-// Zod is used for two purposes:
-//   1. Defining the shape we want from the LLM (passed to withStructuredOutput)
-//   2. Runtime validation of the LLM result (extra safety net)
-//
-// .describe() on each field guides the LLM — these descriptions appear in the
-// function/tool definition that LangChain sends to the model.
+// Classification Schema (Zod)
+// Passed to withStructuredOutput() to enforce a typed return from the LLM.
+// .describe() text is embedded in the tool definition sent to the LLM API.
 // ---------------------------------------------------------------------------
 const classificationSchema = z.object({
   category: z
@@ -66,28 +66,18 @@ const classificationSchema = z.object({
 
 // ---------------------------------------------------------------------------
 // classifyTicket
-//
-// Sends the ticket message to the LLM and returns structured analysis.
-// Uses temperature: 0 for deterministic, consistent classification results.
-//
-// @param {object} ticket
-// @param {string} ticket.subject  - The ticket subject line
-// @param {string} ticket.message  - The customer's message body
-// @returns {Promise<{ category, sentiment, priority, summary }>}
+// One LLM call → category, sentiment, priority, summary
+// Called by classify.node.js inside the LangGraph workflow.
 // ---------------------------------------------------------------------------
 export async function classifyTicket({ subject, message }) {
-  // getChatModel() reads AI_PROVIDER from env — no provider logic here
   const model = getChatModel({ temperature: 0 });
 
-  // Bind the Zod schema to the model.
-  // LangChain translates the schema into a tool/function definition and sends
-  // it to the LLM API. The model fills in the fields instead of generating text.
   const structuredModel = model.withStructuredOutput(classificationSchema, {
-    name: 'classifyTicket', // Names the tool — helps some models understand context
+    name: 'classifyTicket',
   });
 
   const systemPrompt = new SystemMessage(
-    `You are an expert customer support analyst. 
+    `You are an expert customer support analyst.
 Your task is to analyze a customer support ticket and extract structured information.
 
 Be objective and consistent. Base your analysis only on what the customer has written.
@@ -103,17 +93,12 @@ Message: ${message}
 Classify the ticket by category, sentiment, priority, and provide a brief summary.`
   );
 
-  // Invoke the structured model — returns a plain JS object matching the schema
   const result = await structuredModel.invoke([systemPrompt, userPrompt]);
 
-  // Extra safety: validate the result against our schema at runtime.
-  // withStructuredOutput should already enforce this, but explicit validation
-  // catches any edge cases and gives clear error messages during development.
+  // Runtime validation — extra safety net on top of withStructuredOutput
   const parsed = classificationSchema.safeParse(result);
   if (!parsed.success) {
-    throw new Error(
-      `LLM returned invalid classification data: ${parsed.error.message}`
-    );
+    throw new Error(`LLM returned invalid classification data: ${parsed.error.message}`);
   }
 
   return parsed.data;
@@ -121,20 +106,10 @@ Classify the ticket by category, sentiment, priority, and provide a brief summar
 
 // ---------------------------------------------------------------------------
 // generateSuggestedResponse
+// One LLM call → professional draft reply for the customer.
+// Called by response.node.js inside the LangGraph workflow.
 //
-// Given a classified ticket, generates a professional, empathetic draft response.
-// Uses a slightly higher temperature (0.3) for more natural-sounding language.
-//
-// IMPORTANT: This response is a SUGGESTION only. It is never automatically sent.
-// A human agent must approve it via the PATCH /api/tickets/:id/approve endpoint.
-//
-// @param {object} ticket
-// @param {string} ticket.customerName
-// @param {string} ticket.message
-// @param {string} ticket.category
-// @param {string} ticket.priority
-// @param {string} ticket.summary
-// @returns {Promise<string>} The suggested response text
+// IMPORTANT: This is a DRAFT only. Never auto-sent. Requires human approval.
 // ---------------------------------------------------------------------------
 export async function generateSuggestedResponse({ customerName, message, category, priority, summary }) {
   const model = getChatModel({ temperature: 0.3 });
@@ -167,10 +142,97 @@ Write the response body addressed to ${customerName}.`
 
   const result = await model.invoke([systemPrompt, userPrompt]);
 
-  // result.content is the raw string response from the LLM
   if (!result.content || typeof result.content !== 'string') {
     throw new Error('LLM returned an empty or invalid response for generateSuggestedResponse');
   }
 
   return result.content.trim();
+}
+
+// ---------------------------------------------------------------------------
+// analyzeTicket
+//
+// Orchestrates the full LangGraph workflow for a newly created ticket.
+// Called by ticket.controller.js → POST /api/tickets (Phase 5).
+//
+// Flow:
+//   1. Run the graph with the ticket data
+//   2. Graph runs: classify → assignTeam → generateResponse → humanReview
+//   3. Graph PAUSES at humanReview (interrupt)
+//   4. We detect the interrupt and return the AI results
+//   5. The controller saves the results + thread_id to the DB
+//
+// The ticket's DB `id` is used as the graph `thread_id`.
+// This creates a natural 1:1 link between the DB row and the graph checkpoint.
+//
+// @param {object} ticket - The DB ticket row (snake_case field names)
+// @returns {object} AI analysis results + threadId
+// ---------------------------------------------------------------------------
+export async function analyzeTicket(ticket) {
+  // Use the ticket's DB UUID as the LangGraph thread_id.
+  // This means: one ticket = one graph thread = one checkpoint series.
+  const threadId = ticket.id;
+  const config = { configurable: { thread_id: threadId } };
+
+  const result = await ticketGraph.invoke(
+    {
+      ticketId: ticket.id,
+      customerName: ticket.customer_name,
+      customerEmail: ticket.customer_email,
+      subject: ticket.subject,
+      customerMessage: ticket.message,
+    },
+    config
+  );
+
+  // The graph should always pause at humanReview.
+  // If __interrupt__ is present, the graph is waiting for human input — this is the expected case.
+  if (result.__interrupt__) {
+    return {
+      category: result.category,
+      sentiment: result.sentiment,
+      priority: result.priority,
+      summary: result.summary,
+      assignedTeam: result.assignedTeam,
+      suggestedResponse: result.suggestedResponse,
+      threadId,
+    };
+  }
+
+  // Safety fallback: graph completed without interrupting.
+  // This should not happen in normal operation. Log it and return what we have.
+  console.warn('[analyzeTicket] Graph completed without interrupting — humanReview node may have been skipped.');
+  return {
+    category: result.category,
+    sentiment: result.sentiment,
+    priority: result.priority,
+    summary: result.summary,
+    assignedTeam: result.assignedTeam,
+    suggestedResponse: result.suggestedResponse,
+    threadId,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// resumeWorkflow
+//
+// Resumes a paused LangGraph graph after a human decision.
+// Called by the approve and reject controller handlers.
+//
+// LangGraph loads the checkpoint saved during the interrupt() call,
+// re-enters the humanReview node, and runs to completion.
+//
+// @param {string} threadId   - The graph thread_id (same as ticket.id)
+// @param {string} decision   - 'approved' | 'rejected'
+// @returns {object} Final graph state
+// ---------------------------------------------------------------------------
+export async function resumeWorkflow(threadId, decision) {
+  const config = { configurable: { thread_id: threadId } };
+
+  const finalState = await ticketGraph.invoke(
+    new Command({ resume: decision }),
+    config
+  );
+
+  return finalState;
 }

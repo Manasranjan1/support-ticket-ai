@@ -109,7 +109,21 @@ START → classifyTicket → assignTeam → generateResponse → humanReview →
 
 ---
 
-## Phase 4: Response Generation and Human Review ⏳ PENDING
+## Phase 4: Response Generation and Human Review ✅ COMPLETED
+
+**Goal:** Complete AI-assisted support workflow with human approval, rejection, and editing.
+
+### Completed Tasks
+
+- [x] Extended `src/services/ticket-analysis.service.js`:
+  - `analyzeTicket(ticket)`: Runs the full graph, detects the interrupt, extracts analysis payload and `threadId`.
+  - `resumeWorkflow(threadId, decision)`: Resumes the paused workflow via `Command({ resume: decision })`.
+- [x] Connected Human-in-the-Loop review endpoints in `src/controllers/ticket.controller.js`:
+  - `approveTicketHandler`: Resumes the paused graph with `'approved'` and updates status to `APPROVED`.
+  - `rejectTicketHandler`: Resumes the paused graph with `'rejected'` and updates status to `REJECTED`.
+  - `updateResponseHandler`: Supports editing responses before approval (`final_response` update).
+- [x] Implemented status transition validations (`PENDING_REVIEW` required for review actions).
+- [x] Verified non-blocking background analysis execution pattern.
 
 ---
 

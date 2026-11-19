@@ -385,3 +385,30 @@ const TEAM_ASSIGNMENT = {
 ```
 
 Using an LLM here would be slower, more expensive, and less reliable than a plain object lookup. This demonstrates that **LangGraph nodes are just functions** — they call an LLM, query a DB, hit an API, or run pure logic, whatever the step needs.
+
+
+---
+
+## 25. Asynchronous Background Execution vs. Synchronous Blocking in AI Endpoints
+
+When an HTTP client hits `POST /api/tickets`:
+- LLM inference takes 3–8 seconds (2 sequential LLM calls: classification + response drafting).
+- Awaiting the LLM before responding to `POST` creates high HTTP latency and degrades user experience or risks gateway timeouts.
+- **Pattern used:** 
+  1. The DB row is created immediately with status `NEW`.
+  2. The HTTP API returns `201 Created` immediately with the new ticket ID.
+  3. The LangGraph workflow is triggered asynchronously (`runAnalysisInBackground`).
+  4. The workflow marks the ticket `ANALYZING`, runs the graph, reaches `humanReview` (interrupt), saves the analysis and sets status `PENDING_REVIEW`.
+  5. If the AI call fails, status is safely marked `ANALYSIS_FAILED`.
+
+**Interview answer:** "I decoupled the ticket creation HTTP response from LLM inference. The ticket is immediately persisted with status `NEW`, returning an instant `201 Created` to the client. The LangGraph workflow proceeds in the background, updating status to `ANALYZING` and then `PENDING_REVIEW` once paused at the human review checkpoint."
+
+---
+
+## 26. How Response Editing Works with HITL
+
+Support agents often need to tweak AI-generated responses before approving them.
+- `suggested_response` stores the pristine, unedited draft produced by the LLM.
+- `final_response` stores the human-edited or human-approved response.
+- `PATCH /api/tickets/:id/response` updates `final_response` while keeping the ticket in `PENDING_REVIEW`.
+- Once the agent is satisfied, they issue `PATCH /api/tickets/:id/approve` to complete the workflow.
